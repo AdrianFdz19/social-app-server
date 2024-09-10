@@ -101,14 +101,16 @@ auth.post('/sign-in', async (req,res) => {
         const matchPW = await bcrypt.compare(password, user.password);
         if(!matchPW) return res.status(401).json({isArray: false, msg: 'Password is incorrect'});
 
+        
         const authToken = JWT.sign({
             user_id: user.user_id,
             username: user.username,
             email: user.email,
             profile_pic: user.profile_pic,
-            banner_img: user.banner_img
+            banner_img: user.banner_img,
+            is_authenticated: true,
         }, process.env.SECRET_KEY, {expiresIn: '1hr'});
-
+        
         res.status(200).json({authToken});
 
     } catch(err) {
