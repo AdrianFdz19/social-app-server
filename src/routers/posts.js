@@ -6,45 +6,6 @@ const posts = express.Router();
 posts.use(express.json());
 posts.use(cors());
 
-posts.get('/current_user/:user_id', async (req, res) => {
-    try {
-        const current_user_id = req.params.user_id;
-
-        const postsQuery = await pool.query(`
-            SELECT
-                p.post_id AS id,
-                p.user_id AS author_id,
-                u.username AS author_name,
-                u.profile_pic AS author_pic,
-                p.content,
-                p.created_at,
-                p.updated_at,
-                p.likes,
-                CASE
-                    WHEN f.follower_id IS NOT NULL THEN true
-                    ELSE false
-                END AS is_following,
-                CASE
-                    WHEN l.user_id IS NOT NULL THEN true
-                    ELSE false
-                END AS has_liked
-            FROM posts p
-            JOIN users u ON p.user_id = u.user_id
-            LEFT JOIN follows f ON f.follower_id = $1 AND f.followed_id = p.user_id
-            LEFT JOIN likes l ON l.user_id = $1 AND l.post_id = p.post_id
-            ORDER BY p.updated_at DESC
-            LIMIT 15
-        `, [current_user_id]);
-
-        const posts = postsQuery.rows;
-
-        res.status(200).json(posts);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "An error occurred while fetching posts" });
-    }
-});
-
 posts.post('/create', async (req, res) => {
     try {
         const { userId, content, media } = req.body;
@@ -83,6 +44,46 @@ posts.post('/create', async (req, res) => {
     }
 });
 
+posts.get('/current_user/:user_id', async (req, res) => {
+    try {
+        const current_user_id = req.params.user_id;
+
+        const postsQuery = await pool.query(`
+            SELECT
+                p.post_id AS id,
+                p.user_id AS author_id,
+                u.username AS author_name,
+                u.profile_pic AS author_pic,
+                p.content,
+                p.created_at,
+                p.updated_at,
+                -- Se obtiene el conteo de likes para cada post
+                (SELECT COUNT(*) FROM likes WHERE likes.post_id = p.post_id) AS likes_count,
+                CASE
+                    WHEN f.follower_id IS NOT NULL THEN true
+                    ELSE false
+                END AS is_following,
+                CASE
+                    WHEN l.user_id IS NOT NULL THEN true
+                    ELSE false
+                END AS has_liked
+            FROM posts p
+            JOIN users u ON p.user_id = u.user_id
+            LEFT JOIN follows f ON f.follower_id = $1 AND f.followed_id = p.user_id
+            LEFT JOIN likes l ON l.user_id = $1 AND l.post_id = p.post_id
+            ORDER BY p.updated_at DESC
+            LIMIT 15
+        `, [current_user_id]);
+
+        const posts = postsQuery.rows;
+
+        res.status(200).json(posts);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "An error occurred while fetching posts" });
+    }
+});
+
 posts.get('/profile/id/:profile_id', async (req, res) => {
     try {
         const profile_id = req.params.profile_id; // id del perfil
@@ -103,7 +104,8 @@ posts.get('/profile/id/:profile_id', async (req, res) => {
                 p.content,
                 p.created_at,
                 p.updated_at,
-                p.likes,
+                -- Se obtiene el conteo de likes para cada post
+                (SELECT COUNT(*) FROM likes WHERE likes.post_id = p.post_id) AS likes_count,
                 CASE
                     -- Si el user_id es igual al profile_id, no se puede seguir a sí mismo
                     WHEN p.user_id = $2 THEN false
@@ -132,6 +134,43 @@ posts.get('/profile/id/:profile_id', async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+
+//LIKES
+posts.post('/post_id/:post_id/like', async(req,res) => {
+    try {
+        const post_id = req.params.post_id;
+        const user_id = req.query.user_id;
+
+        await pool.query(`
+            INSERT INTO likes
+            (user_id, post_id)
+            VALUES ($1, $2)
+        `, [user_id, post_id]);
+
+        res.status(200).json({msg: `${user_id} like ${post_id}`, type: true});
+    } catch(err) {
+        console.error(err);
+        res.status(500);
+    }
+});
+
+posts.delete('/post_id/:post_id/dislike', async(req,res) => {
+    try {
+        const post_id = req.params.post_id;
+        const user_id = req.query.user_id;
+
+        await pool.query(`
+            DELETE FROM likes
+            WHERE user_id = $1 AND post_id = $2
+        `, [user_id, post_id]);
+
+        res.status(200).json({msg: `${user_id} dislike ${post_id}`, type: false});
+    } catch(err) {
+        console.error(err);
+        res.status(500);
     }
 });
 
