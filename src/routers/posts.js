@@ -23,10 +23,15 @@ posts.get('/current_user/:user_id', async (req, res) => {
                 CASE
                     WHEN f.follower_id IS NOT NULL THEN true
                     ELSE false
-                END AS is_following
+                END AS is_following,
+                CASE
+                    WHEN l.user_id IS NOT NULL THEN true
+                    ELSE false
+                END AS has_liked
             FROM posts p
             JOIN users u ON p.user_id = u.user_id
             LEFT JOIN follows f ON f.follower_id = $1 AND f.followed_id = p.user_id
+            LEFT JOIN likes l ON l.user_id = $1 AND l.post_id = p.post_id
             ORDER BY p.updated_at DESC
             LIMIT 15
         `, [current_user_id]);
@@ -106,10 +111,16 @@ posts.get('/profile/id/:profile_id', async (req, res) => {
                     WHEN f.follower_id IS NOT NULL THEN true
                     -- En otros casos, no lo está siguiendo
                     ELSE false
-                END AS is_following
+                END AS is_following,
+                CASE
+                    -- Verificar si el usuario actual ha dado like a este post
+                    WHEN l.user_id IS NOT NULL THEN true
+                    ELSE false
+                END AS has_liked
             FROM posts p
             JOIN users u ON p.user_id = u.user_id
             LEFT JOIN follows f ON f.follower_id = $2 AND f.followed_id = p.user_id
+            LEFT JOIN likes l ON l.user_id = $2 AND l.post_id = p.post_id
             WHERE p.user_id = $1
             ORDER BY p.updated_at DESC
             LIMIT 15
@@ -123,6 +134,7 @@ posts.get('/profile/id/:profile_id', async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+
 
 
 export default posts;
