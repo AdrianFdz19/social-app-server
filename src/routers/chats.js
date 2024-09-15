@@ -71,7 +71,7 @@ chats.get('/open', async (req, res) => {
     try {
         // Extraer userId y targetId de la consulta
         const { user_id, target_id } = req.query;
-        console.log(user_id, target_id);
+        /* console.log(user_id, target_id); */
 
         // Consultar el chat_id en el que ambos usuarios están presentes
         const result = await pool.query(`
@@ -114,7 +114,7 @@ chats.get('/open', async (req, res) => {
         // Crear el chat nuevo
         const createChatQuery = await pool.query('INSERT INTO chats (is_group) VALUES(false) RETURNING chat_id');
         const newChatId = createChatQuery.rows[0].chat_id;
-        console.log(newChatId);
+        /* console.log(newChatId); */
 
         // Enlazar a ambos usuarios a este chat
         await pool.query('INSERT INTO chat_members (chat_id, user_id) VALUES ($1, $2), ($1, $3)', [newChatId, user_id, target_id]);
