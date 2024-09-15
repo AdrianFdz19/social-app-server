@@ -149,7 +149,8 @@ io.on('connection', (socket) => {
             const inactiveConnectedUsers = connectedUsers.filter(userId => !activeUserIds.includes(userId));
     
             // Enviar evento 'new-message' a los usuarios activos en el chat
-            for (let activeUserId of activeUserIds) {
+            let activeUsersChat = activeUserIds.filter(user => user !== senderId); //Filtrar a todos menos al sender para que no se le envie el mensaje tambien.
+            for (let activeUserId of activeUsersChat) {
                 const socketId = await getSocketIdByUserId(activeUserId);
                 if (socketId) {
                     io.to(socketId).emit('new-message', { message: 'nuevo mensaje', newMessage });
