@@ -149,8 +149,7 @@ io.on('connection', (socket) => {
             const inactiveConnectedUsers = connectedUsers.filter(userId => !activeUserIds.includes(userId));
     
             // Enviar evento 'new-message' a los usuarios activos en el chat
-            let activeUsersChat = activeUserIds.filter(user => user !== senderId); //Filtrar a todos menos al sender para que no se le envie el mensaje tambien.
-            for (let activeUserId of activeUsersChat) {
+            for (let activeUserId of activeUserIds) {
                 const socketId = await getSocketIdByUserId(activeUserId);
                 if (socketId) {
                     io.to(socketId).emit('new-message', { message: 'nuevo mensaje', newMessage });
@@ -158,6 +157,7 @@ io.on('connection', (socket) => {
             }
 
            // Crear objeto de notificación para el usuario inactivo
+           // Contabilizar la cuenta de mensajes unreaded en la tabla user chat de cada usuario inactivo en la conversacion !!!
             for (let inactiveUserId of inactiveConnectedUsers) {
             
                 if (!isNewChat) {
