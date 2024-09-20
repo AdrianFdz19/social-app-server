@@ -99,9 +99,9 @@ io.on('connection', (socket) => {
             const isNewChatQuery = await pool.query(`
                 SELECT message_id FROM messages WHERE chat_id = $1 LIMIT 1
             `, [chatId]);
-            const isNewChat = isNewChatQuery.rows[0];
+            const isNewChat = !isNewChatQuery.rows[0];
     
-            if (!isNewChat) {
+            if (isNewChat) {
                 await pool.query(`
                     UPDATE user_chat 
                     SET is_active = true 
@@ -109,10 +109,6 @@ io.on('connection', (socket) => {
                     AND user_id != $2;
                 `, [chatId, senderId]);
             }
-
-            /* Si es un chat nuevo, necesitas enviar la notificacion en tiempo real
-                al otro usuario de la conversacion para renderizar la notificacion en su caso
-            */
     
             // Guardar el mensaje en la base de datos
             const messageQuery = await pool.query(`
@@ -151,17 +147,25 @@ io.on('connection', (socket) => {
             // Enviar evento 'new-message' a los usuarios activos en el chat
             for (let activeUserId of activeUserIds) {
                 const socketId = await getSocketIdByUserId(activeUserId);
+                console.log('Este es un socket activo del chat', socketId);
                 if (socketId) {
                     io.to(socketId).emit('new-message', { message: 'nuevo mensaje', newMessage });
                 }
             }
 
            // Crear objeto de notificación para el usuario inactivo
-           // Contabilizar la cuenta de mensajes unreaded en la tabla user chat de cada usuario inactivo en la conversacion !!!
             for (let inactiveUserId of inactiveConnectedUsers) {
+                // Actualizar el unread_count en el user_chat del usuario inactivo 
+                await pool.query(
+                    `UPDATE user_chat 
+                        SET unread_count = unread_count + 1 
+                        WHERE user_id = $1 AND chat_id = $2`,
+                    [inactiveUserId, chatId]
+                );
             
-                if (!isNewChat) {
+                if (isNewChat) {
                     // Caso: Chat nuevo, enviar toda la información (name, pic, etc.)
+                    console.log('Mensaje en un chat nuevo');
                     const chatNotificationQuery = await pool.query(`
                         SELECT  
                             c.chat_id AS id,
@@ -208,6 +212,8 @@ io.on('connection', (socket) => {
                     const chatNotification = chatNotificationQuery.rows[0];
             
                     const socketId = await getSocketIdByUserId(inactiveUserId);
+                    console.log('Este es un socket inactivo del chat', socketId);
+                    console.log(chatNotification);
                     if (socketId) {
                         // Enviar todos los datos del chat
                         io.to(socketId).emit('chat-notification', { message: 'nuevo chat', chatNotification });
@@ -239,6 +245,7 @@ io.on('connection', (socket) => {
                     const unread = unreadQuery.rows[0].unread;
             
                     const socketId = await getSocketIdByUserId(inactiveUserId);
+                    console.log('Este es un socket inactivo del chat', socketId);
                     if (socketId) {
                         // Enviar solo la información dinámica del chat existente
                         io.to(socketId).emit('chat-notification', { 
@@ -257,6 +264,12 @@ io.on('connection', (socket) => {
             console.error(err);
         }
     });
+
+    // Manejar eventos para marcar un mensaje en leido
+    /* 
+        Logica de seguimiento:
+        1.- El mensaje 
+    */
 
     socket.on('disconnect', async () => {
         console.log(`User disconnected: ${userId}, ${socket.id}`);
