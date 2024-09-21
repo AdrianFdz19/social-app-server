@@ -115,7 +115,17 @@ io.on('connection', (socket) => {
                 INSERT INTO messages (chat_id, sender_id, content, status, sent_at)
                 VALUES ($1, $2, $3, $4, $5) RETURNING *
             `, [chatId, senderId, content, 'sent', sentAt]);
-            const newMessage = messageQuery.rows[0];
+            const msgData = messageQuery.rows[0];
+            let newMessage = {
+                id: msgData.message_id,
+                chat_id: msgData.chat_id,
+                sender_id: msgData.sender_id,
+                content: msgData.content,
+                sent_at: msgData.sent_at,
+                status: msgData.status
+            };
+
+            console.log(newMessage.status);
     
             // Obtener la lista de miembros del chat
             const membersResult = await pool.query(`
@@ -268,8 +278,31 @@ io.on('connection', (socket) => {
     // Manejar eventos para marcar un mensaje en leido
     /* 
         Logica de seguimiento:
-        1.- El mensaje 
+        1.- El mensaje le llega ya sea como notificacion o mensaje directo al usuario miembro
+        2.- el message se guarda con su columna status como sent
+        3.- cuando el segundo miembro de la conversacion vea ese message entonces marcarlo como read en la base de datos y a su ves mandarle un evento al segundo miembro (creador del message) donde se le marque
+        dicho message como 'read'
+        4.- Cuando un usuario vea en el cliente el mensaje se activa el trigger para generar el evento
     */
+
+    socket.on('read-message', async (message) => {
+
+        const {messageId, chatId, senderId} = message;
+        console.log(typeof messageId, typeof chatId, typeof senderId);
+        console.log('Este mensaje se ha leido ', messageId);
+
+        // El primer mensaje de la conversacion no se esta guardando correctamente, el id es nulo
+
+        // Actualizar el sent a read en el message correspondiente
+        await pool.query(`UPDATE messages SET status = 'read' WHERE message_id = $1`, [Number(messageId)]);
+
+        // Obtener el socket del miembro que envio el mensaje
+        const socketId = await getSocketIdByUserId(Number(senderId));
+            
+        // Enviar el evento de lectura en tiempo real
+        io.to(socketId).emit('read-message', { chatId, messageId });
+
+    });
 
     socket.on('disconnect', async () => {
         console.log(`User disconnected: ${userId}, ${socket.id}`);
