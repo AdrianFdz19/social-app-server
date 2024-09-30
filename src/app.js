@@ -287,11 +287,9 @@ io.on('connection', (socket) => {
 
     socket.on('read-message', async (message) => {
 
-        const {messageId, chatId, senderId} = message;
+        const {messageId, chatId, senderId, userId} = message;
         console.log(typeof messageId, typeof chatId, typeof senderId);
         console.log('Este mensaje se ha leido ', messageId);
-
-        // El primer mensaje de la conversacion no se esta guardando correctamente, el id es nulo
 
         // Actualizar el sent a read en el message correspondiente
         await pool.query(`UPDATE messages SET status = 'read' WHERE message_id = $1`, [Number(messageId)]);
@@ -302,6 +300,13 @@ io.on('connection', (socket) => {
         // Enviar el evento de lectura en tiempo real
         io.to(socketId).emit('read-message', { chatId, messageId });
 
+        // Obtener el socket del miembro que leyo el mensaje
+        const activeSocketId = await getSocketIdByUserId(Number(userId));
+        await pool.query(`
+            UPDATE user_chat 
+            SET unread_count = unread_count - 1
+            WHERE unread_count > 0 AND chat_id = $1 AND user_id = $2`
+        ,[chatId, userId]);
     });
 
     socket.on('disconnect', async () => {
