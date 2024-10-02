@@ -309,6 +309,74 @@ io.on('connection', (socket) => {
         ,[chatId, userId]);
     });
 
+    socket.on('follow-notification', async (followData) => {
+        const { userId, targetId } = followData;
+    
+        try {
+            // Iniciar una transacción
+            await pool.query('BEGIN');
+    
+            // Comprobar si ya existe el follow
+            const verifyFollowQuery = await pool.query(`
+                SELECT id FROM notifications 
+                WHERE user_id = $1 AND source_id = $2 AND type = 'follow';
+            `, [targetId, userId]); // Aquí cambiamos el orden, ya que targetId recibe la notificación y userId es el que sigue
+    
+            const verifyFollow = verifyFollowQuery?.rows[0]?.id || false;
+    
+            if (verifyFollow) {
+                // Si ya existe el follow, termina la transacción y retorna
+                await pool.query('COMMIT');
+                return;
+            }
+    
+            const content = `started following you!`;
+    
+            // Insertar la nueva notificación en la base de datos
+            const notQuery = await pool.query(`
+                INSERT INTO notifications (user_id, source_id, type, content) 
+                VALUES ($1, $2, $3, $4) 
+                RETURNING *;
+            `, [targetId, userId, 'follow', content]); // Aquí el userId es el que generó el follow (el que sigue), pero la notificación es para el targetId
+    
+            // Obtener los datos del usuario que realizó el follow
+            const userQuery = await pool.query(`
+                SELECT username as source_name, profile_pic as source_pic 
+                FROM users WHERE user_id = $1
+            `, [userId]); // Aquí obtenemos los datos del usuario que generó el follow
+    
+            const data = notQuery.rows[0];
+            const user = userQuery.rows[0];
+            const notification = {
+                user_id: data.user_id,        // Este es el targetId (el que recibe la notificación)
+                source_name: user.source_name, // Este es el nombre del que sigue (userId)
+                source_pic: user.source_pic,   // La imagen del que sigue
+                source_id: data.source_id,     // Este es el userId (el que sigue)
+                content: data.content,
+                read: data.read,
+                type_not: data.type,
+                date: data.date
+            };
+    
+            console.log(notification);
+    
+            // Verificar si el usuario objetivo (targetId) está activo
+            const targetSocketId = await getSocketIdByUserId(targetId);
+            if (targetSocketId) {
+                io.to(targetSocketId).emit('follow-notification', notification); // Aquí enviamos la notificación al usuario seguido (targetId)
+            }
+    
+            // Finalizar la transacción
+            await pool.query('COMMIT');
+        } catch (error) {
+            console.error('Error al procesar la notificación de follow:', error);
+            // En caso de error, hacer rollback de la transacción
+            await pool.query('ROLLBACK');
+        }
+    });
+    
+    
+
     socket.on('disconnect', async () => {
         console.log(`User disconnected: ${userId}, ${socket.id}`);
         try {

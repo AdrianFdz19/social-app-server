@@ -123,4 +123,38 @@ user.get('/unfollow', async(req,res) => {
     }
 });
 
+// Notifications
+user.get('/notifications/:userId', async (req, res) => {
+    try {
+        const userId = req.params.userId;
+
+        const query = await pool.query(`
+            SELECT
+                u.username as source_name,
+                u.profile_pic as source_pic,
+                n.source_id,          -- Quien generó la notificación (quien sigue)
+                n.type,
+                n.content,
+                n.read,
+                n.date
+            FROM 
+                notifications n
+            INNER JOIN
+                users u
+            ON 
+                u.user_id = n.source_id  -- El usuario que generó la notificación (quien sigue)
+            WHERE   
+                n.user_id = $1            -- El usuario que recibe la notificación (targetId)
+        `, [userId]);
+
+        const notifications = query.rows;
+
+        return res.status(200).json({ notifications });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).send('Error al obtener notificaciones');
+    }
+});
+
+
 export default user;
