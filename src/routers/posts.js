@@ -80,29 +80,29 @@ posts.get('/current_user/:user_id', async (req, res) => {
 
         const posts = postsQuery.rows;
 
-        // Consulta para obtener los dos comentarios más recientes por cada post
+        if (posts.length === 0) {
+            return res.status(200).json([]); // No hay posts, devolver vacío
+        }
+
+        // Obtener los IDs de los posts para la consulta de comentarios
+        const postIds = posts.map(post => post.id);
+
+        // Consulta para obtener los comentarios con level = 1
         const commentsQuery = await pool.query(`
-            -- Consulta para obtener los dos comentarios más recientes por cada post de nivel 1
-                SELECT
-                    c.post_id,
-                    json_build_object(
-                        'id', c.comment_id,
-                        'author_name', u.username,
-                        'author_pic', u.profile_pic,
-                        'content', c.content,
-                        'updated_at', c.updated_at
-                    ) AS comment
-                FROM (
-                    SELECT 
-                        c.*,
-                        ROW_NUMBER() OVER (PARTITION BY c.post_id ORDER BY c.created_at DESC) AS row_num
-                    FROM comments c
-                    WHERE c.level = 1 -- o WHERE c.reply_to_comment_id IS NULL si defines el nivel así
-                ) c
-                JOIN users u ON u.user_id = c.author_id
-                WHERE c.row_num <= 2 AND c.post_id = ANY($1::int[])
-                ORDER BY c.post_id, c.created_at DESC;
-        `, [posts.map(post => post.id)]);
+            SELECT 
+                comment_id AS id,  -- Cambiamos el nombre para que sea 'id' en la respuesta
+                post_id, 
+                author_id,
+                reply_to_comment_id,
+                content,
+                level,
+                updated_at,
+                (SELECT username FROM users WHERE users.user_id = comments.author_id) AS author_name,
+                (SELECT profile_pic FROM users WHERE users.user_id = comments.author_id) AS author_pic
+            FROM comments
+            WHERE post_id = ANY($1::int[]) AND level = 1  -- Filtramos los comentarios por los post_id y level 1
+            ORDER BY updated_at DESC;
+        `, [postIds]);
 
         const commentsByPost = {};
 
@@ -111,7 +111,7 @@ posts.get('/current_user/:user_id', async (req, res) => {
             if (!commentsByPost[row.post_id]) {
                 commentsByPost[row.post_id] = [];
             }
-            commentsByPost[row.post_id].push(row.comment);
+            commentsByPost[row.post_id].push(row);
         });
 
         // Asignar los comentarios a cada post
@@ -128,6 +128,7 @@ posts.get('/current_user/:user_id', async (req, res) => {
         res.status(500).json({ error: "An error occurred while fetching posts" });
     }
 });
+
 
 
 posts.get('/profile/id/:profile_id', async (req, res) => {
@@ -265,40 +266,71 @@ posts.delete('/post_id/:post_id/dislike', async(req,res) => {
 });
 
 // COMMENTS
-posts.post('/add-comment', async (req,res) => {
+posts.post('/add-comment', async (req, res) => {
     try {
-        const {postId, authorId, commentId, content} = req.body;
-        /* console.log(postId, authorId, content); */
-        let isReply = commentId;
+        const { postId, authorId, replyTo, content } = req.body;
+        console.log(postId, authorId, replyTo, content);
         let query;
-        let level;
+        let level = 1;  // Por defecto, nivel 0 para comentarios principales
 
-        if(isReply) {
-            const levelQuery = await pool.query(`SELECT level FROM comments WHERE comment_id = $1`, [commentId]);
-            const levelResult = JSON.parse(levelQuery.rows[0].level);
-            level = levelResult + 1;
+        // Si replyTo es distinto de 0, significa que es una respuesta
+        if (replyTo !== 0) {
+            // Buscar el nivel del comentario padre
+            const levelQuery = await pool.query(`SELECT level FROM comments WHERE comment_id = $1`, [replyTo]);
+            
+            // Si el comentario padre existe
+            if (levelQuery.rows.length > 0) {
+                const levelResult = levelQuery.rows[0].level;
+                level = levelResult + 1;  // El nivel del comentario hijo es el nivel del padre + 1
+            } else {
+                return res.status(404).json({ msg: 'Parent comment not found' });
+            }
 
+            // Insertar un comentario que es una respuesta
             query = await pool.query(`
                 INSERT INTO comments
                 (post_id, author_id, reply_to_comment_id, content, level) 
                 VALUES ($1, $2, $3, $4, $5) RETURNING *
-            `, [postId, authorId, commentId, content, level]);
+            `, [postId, authorId, replyTo, content, level]);
         } else {
+            // Insertar un comentario principal (sin replyTo y sin nivel)
             query = await pool.query(`
                 INSERT INTO comments
-                (post_id, author_id, content) 
-                VALUES ($1, $2, $3) RETURNING *
-            `, [postId, authorId, content]);
+                (post_id, author_id, content, level) 
+                VALUES ($1, $2, $3, $4) RETURNING *
+            `, [postId, authorId, content, level]);
         }
 
-        const comment = query.rows[0];
+        // Construir el objeto de vuelta
+        const authorQuery = await pool.query(`
+            SELECT
+                user_id as id,
+                username as name,
+                profile_pic as pic
+            FROM users WHERE user_id = $1
+        `, [authorId]);
+        const author = authorQuery.rows[0];
 
-        res.status(200).json({msg: 'Comment added to post succesfully', comment});
-    } catch(err) {
+        const data = query.rows[0];
+
+        const comment = {
+            id: data.comment_id,
+            post_id: data.post_id,
+            author_id: author.id,
+            author_name: author.name,
+            author_pic: author.pic,
+            content: data.content,
+            updated_at: data.updated_at,
+            reply_to_comment_id: data.reply_to_comment_id,
+            level: data.level
+        };
+
+        res.status(200).json({ msg: 'Comment added to post successfully', comment });
+    } catch (err) {
         console.error(err);
-        res.status(500).json({});
+        res.status(500).json({ msg: 'Error adding comment' });
     }
-})
+});
 
 posts.get('/comments/:comment_id/replies/count', async (req,res) => {
     try {
@@ -313,7 +345,7 @@ posts.get('/comments/:comment_id/replies/count', async (req,res) => {
         console.error(err);
         res.status(500).json({});
     }
-})
+});
 
 posts.get('/comments/:comment_id/replies', async (req, res) => {
     try {
@@ -333,14 +365,15 @@ posts.get('/comments/:comment_id/replies', async (req, res) => {
         // Obtener los comentarios hijos (no nietos) y la información del autor
         const repliesQuery = await pool.query(`
             SELECT
-                c.comment_id as id,
+                c.comment_id AS id,
                 c.author_id,
                 u.username AS author_name,
                 u.profile_pic AS author_pic,
                 c.content,
                 c.created_at,
                 c.updated_at,
-                c.level
+                c.level,
+                c.reply_to_comment_id
             FROM comments c
             JOIN users u ON c.author_id = u.user_id
             WHERE c.reply_to_comment_id = $1 AND c.level = $2
@@ -355,6 +388,7 @@ posts.get('/comments/:comment_id/replies', async (req, res) => {
         res.status(500).json({ error: 'An error occurred while fetching replies' });
     }
 });
+
 
 
 export default posts;
