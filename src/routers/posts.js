@@ -101,7 +101,7 @@ posts.get('/current_user/:user_id', async (req, res) => {
                 (SELECT profile_pic FROM users WHERE users.user_id = comments.author_id) AS author_pic
             FROM comments
             WHERE post_id = ANY($1::int[]) AND level = 1  -- Filtramos los comentarios por los post_id y level 1
-            ORDER BY updated_at DESC;
+            ORDER BY updated_at ASC;
         `, [postIds]);
 
         const commentsByPost = {};
@@ -281,7 +281,7 @@ posts.post('/add-comment', async (req, res) => {
             // Si el comentario padre existe
             if (levelQuery.rows.length > 0) {
                 const levelResult = levelQuery.rows[0].level;
-                level = levelResult + 1;  // El nivel del comentario hijo es el nivel del padre + 1
+                level = levelResult == 3 ? 3 : levelResult + 1;  // El nivel del comentario hijo es el nivel del padre + 1
             } else {
                 return res.status(404).json({ msg: 'Parent comment not found' });
             }
@@ -332,24 +332,31 @@ posts.post('/add-comment', async (req, res) => {
     }
 });
 
-posts.get('/comments/:comment_id/replies/count', async (req,res) => {
+posts.get('/comments/:comment_id/replies/count', async (req, res) => {
     try {
         const comment_id = req.params.comment_id;
         
         const query = await pool.query(`SELECT COUNT(*) FROM comments WHERE reply_to_comment_id = $1`, [comment_id]);
 
-        const count = query.rows[0];
+        // Accede a la propiedad count y convierte a número
+        const count = parseInt(query.rows[0].count, 10);
 
-        res.status(200).json(count);
+        // Devuelve el conteo en un objeto
+        res.status(200).json({ count });
     } catch(err) {
         console.error(err);
-        res.status(500).json({});
+        res.status(500).json({ error: 'Error counting replies' }); // Mensaje de error más descriptivo
     }
 });
 
 posts.get('/comments/:comment_id/replies', async (req, res) => {
     try {
         const comment_id = req.params.comment_id;
+
+        // Validar que comment_id sea un valor válido
+        if (!comment_id) {
+            return res.status(400).json({ error: 'Invalid comment ID' });
+        }
 
         // Consulta para obtener el nivel del comentario principal
         const parentCommentQuery = await pool.query(`
@@ -362,7 +369,10 @@ posts.get('/comments/:comment_id/replies', async (req, res) => {
 
         const parentLevel = parentCommentQuery.rows[0].level;
 
-        // Obtener los comentarios hijos (no nietos) y la información del autor
+        // Limitar el nivel para no exceder 3
+        const repliesLevel = Math.min(parentLevel + 1, 3);
+
+        // Obtener los comentarios hijos y la información del autor
         const repliesQuery = await pool.query(`
             SELECT
                 c.comment_id AS id,
@@ -377,18 +387,37 @@ posts.get('/comments/:comment_id/replies', async (req, res) => {
             FROM comments c
             JOIN users u ON c.author_id = u.user_id
             WHERE c.reply_to_comment_id = $1 AND c.level = $2
-            ORDER BY c.created_at DESC
-        `, [comment_id, parentLevel + 1]);
+            ORDER BY c.updated_at ASC
+        `, [comment_id, repliesLevel]); // Obtener hijos de nivel 2 o 3
 
         const replies = repliesQuery.rows;
 
-        res.status(200).json(replies);
+        // Agregar lógica para determinar 'showAncestorBranch'
+        const enrichedReplies = replies.map(reply => {
+            const isGrandchild = reply.level === 3;
+            let showAncestorBranch = false;
+
+            if (isGrandchild) {
+                const parentId = reply.reply_to_comment_id;
+                const siblings = replies.filter(r => r.reply_to_comment_id === parentId);
+
+                // Verificar si el padre es el último comentario
+                const isLastSibling = siblings[siblings.length - 1].id === reply.id;
+
+                showAncestorBranch = !isLastSibling;
+            }
+
+            return {
+                ...reply,
+                showAncestorBranch,
+            };
+        });
+
+        res.status(200).json(enrichedReplies);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'An error occurred while fetching replies' });
     }
 });
-
-
 
 export default posts;
